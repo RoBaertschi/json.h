@@ -71,7 +71,7 @@
 
 #ifndef JSON_REALLOC
 #include <stdlib.h>
-#define JSON_REALLOC(ptr, size) realloc(ptr, size)
+#define JSON_REALLOC(ptr, old_size, size) realloc(ptr, size)
 #endif // JSON_REALLOC
 
 #ifndef JSON_FREE
@@ -334,7 +334,7 @@ struct json_object_entry json_object_iterator_next(struct json_object_iterator* 
 }
 
 struct json_string json_string_create(unsigned char *str, size_t len, bool *ok) {
-    assert(ok != NULL);
+    JSON_ASSERT(ok != NULL, "ok has to be a valid pointer");
 
     if (len <= 0) {
         *ok = true;
@@ -414,7 +414,7 @@ struct json_value json_string_to_value(struct json_string str) {
 // Allocates a new object, use the other json_object_* functions to add and remove attributes.
 //
 struct json_object json_object_create(bool *ok) {
-    assert(ok != NULL);
+    JSON_ASSERT(ok != NULL, "ok has to be a valid pointer");
     struct json__hash_map *hm = json__hm_create();
     if (hm == NULL) {
         *ok = false;
@@ -434,7 +434,7 @@ struct json_value json_object_to_value(struct json_object obj) {
 }
 
 struct json_object json_object_copy(struct json_object obj, bool *ok) {
-    assert(ok != NULL);
+    JSON_ASSERT(ok != NULL, "ok has to be a valid pointer");
     struct json_object new_obj = {
         ._hm = json__hash_map_copy(obj._hm),
     };
@@ -572,7 +572,7 @@ struct json_value json_null(void) {
 }
 
 struct json_value json_value_copy(struct json_value value, bool *ok) {
-    assert(ok != NULL);
+    JSON_ASSERT(ok != NULL, "ok has to be a valid pointer");
     switch (value.type) {
         case JSON_OBJECT:
             return json_object_copyv(value.data.object, ok);
@@ -791,7 +791,7 @@ static bool json__hash_map_insert(struct json__hash_map *hm, struct json_string 
         if (hm->collisions_cap <= hm->collisions_size+1) {
             // NOTE: Why sizeof(*ptr)? this way, we can just change the type without having to change each sizeof
             size_t new_size = hm->collisions_cap * JSON_GROWTH_FACTOR * sizeof(*hm->collisions);
-            struct json__hash_map_entry *new_collisions = JSON_REALLOC(hm->collisions, new_size);
+            struct json__hash_map_entry *new_collisions = JSON_REALLOC(hm->collisions, hm->collisions_cap * sizeof(*hm->collisions), new_size);
             if (new_collisions == NULL) {
                 return false;
             }
