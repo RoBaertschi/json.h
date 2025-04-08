@@ -910,6 +910,7 @@ static struct json__hash_map *json__hash_map_copy(struct json__hash_map *hm) {
 
 static struct json__hash_map_entry json__hash_map_entry_copy(struct json__hash_map_entry entry, struct json__hash_map_entry *new_collisions, struct json__hash_map_entry *old_collisions, bool *ok) {
     if (!json__hash_map_entry_valid(&entry)) {
+        *ok = true;
         return (struct json__hash_map_entry) {0};
     }
 
