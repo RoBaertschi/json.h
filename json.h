@@ -34,6 +34,7 @@
 //
 
 #include <string.h>
+
 #ifndef JSON_STATIC_ASSERT
 #include <assert.h>
 #define JSON_STATIC_ASSERT static_assert
