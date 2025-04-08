@@ -99,5 +99,9 @@ int main(void) {
 
     json_object_delete(obj);
 
+    // ------
+    // Arrays
+    // ------
+
     arena_free(context_arena);
 }
