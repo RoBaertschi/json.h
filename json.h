@@ -294,6 +294,7 @@ enum json_token_type {
     JSON_TOKEN_COMMA,
     JSON_TOKEN_COLON,
 
+    JSON_TOKEN_IDENTIFIER,
     JSON_TOKEN_NULL,
     JSON_TOKEN_TRUE,
     JSON_TOKEN_FALSE,
@@ -419,7 +420,7 @@ struct json_string json_string_create(unsigned char *str, size_t len, bool *ok) 
     }
 
     struct json_string new_str = {
-        .data = malloc(len),
+        .data = JSON_MALLOC(len),
         .len = len,
     };
 
@@ -1073,6 +1074,48 @@ void json_lexer_deinit(struct json_lexer *l) {
     *l = (struct json_lexer) {0};
 }
 
+// Hashes for the keywords, as long as all of them are different, we can use them to compare each other.
+static size_t false_hash = 210667871779;
+static size_t true_hash = 6383874908;
+static size_t null_hash = 229417312366851;
+
+static bool json__lexer_is_valid_identifier_ch(unsigned char ch, bool first_ch) {
+    return ('a' <= ch && ch <= 'z')
+            || ('A' <= ch && ch <= 'Z')
+            || ch == '_'
+            || (!first_ch && ('0' <= ch && ch <= '9'));
+}
+
+static struct json_token json__lexer_read_token(struct json_lexer *l, bool *ok) {
+    struct json_loc start_loc = (struct json_loc) {.pos = l->pos, .col = l->col, .row = l->row};
+    size_t start_pos = l->pos;
+
+    while (json__lexer_is_valid_identifier_ch(l->ch, false)) {
+        json__lexer_read_ch(l);
+    }
+
+    size_t len = l->pos - start_pos;
+    size_t hash = json__hash(l->source.data + start_pos, len);
+    enum json_token_type type = JSON_TOKEN_IDENTIFIER;
+    union json_token_data data = {0};
+
+    if (hash == false_hash) {
+        type = JSON_TOKEN_FALSE;
+    } else if (hash == true_hash) {
+        type = JSON_TOKEN_TRUE;
+    } else if (hash == null_hash) {
+        type = JSON_TOKEN_NULL;
+    } else {
+        data.string = json_string_create(l->source.data + start_pos, len, ok);
+    }
+    return (struct json_token){
+        .data = data,
+        .loc = start_loc,
+        .len = len,
+        .type = type,
+    };
+}
+
 struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
     struct json_token t = {
         .len = 1,
@@ -1080,9 +1123,17 @@ struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
     };
 
     switch (l->ch) {
-    case -1:
-        t.type = JSON_TOKEN_EOF;
-        break;
+    case -1:    t.type = JSON_TOKEN_EOF; break;
+    case '{':   t.type = JSON_TOKEN_LBRACE; break;
+    case '}':   t.type = JSON_TOKEN_LBRACE; break;
+    case '[':   t.type = JSON_TOKEN_LBRACKET; break;
+    case ']':   t.type = JSON_TOKEN_RBRACKET; break;
+    case ',':   t.type = JSON_TOKEN_COMMA; break;
+    case ':':   t.type = JSON_TOKEN_COLON; break;
+    default:
+        if (json__lexer_is_valid_identifier_ch(l->ch, true)) {
+            return json__lexer_read_token(l, ok);
+        }
     }
     json__lexer_read_ch(l);
 
