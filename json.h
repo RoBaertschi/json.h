@@ -33,6 +33,7 @@
 //  NOTE: There might be a point where we add full custom allocator support with user data support.
 //
 
+#include <stdio.h>
 #include <string.h>
 
 #ifndef JSON_STATIC_ASSERT
@@ -207,6 +208,10 @@ struct json_value json_string_to_value(struct json_string str);
 
 #define JSON_STR(cstr) (struct json_string) { .data = (unsigned char *) cstr, .len = sizeof(cstr) / sizeof(cstr[0]) }
 
+
+// string
+bool json_string_eq(struct json_string first, struct json_string second);
+
 //------------------------------
 // ARRAY PUBLIC API
 //------------------------------
@@ -224,10 +229,10 @@ struct json_value json_array_copyv(struct json_array arr, bool *ok);
 struct json_array json_array_concat(struct json_array left, struct json_array right, bool *ok);
 struct json_value json_array_concatv(struct json_array left, struct json_array right, bool *ok);
 
-// This macro allows for easy creation of a array's with values, because currently json_array's are immutable (100% not because I am lazy to implement the proper functions or something /s).
-#define JSON_CREATE_ARRAY(ok, ...) json_array_copy((struct json_array) { .items = (struct json_value[]){ __VA_ARGS__ }, .len = sizeof((struct json_value[]){ __VA_ARGS__ }) / sizeof(struct json_value) }, (ok))
+#define JSON_CREATE_TEMP_ARRAY(...) (struct json_array) { .items = (struct json_value[]){ __VA_ARGS__ }, .len = sizeof((struct json_value[]){ __VA_ARGS__ }) / sizeof(struct json_value) }
 
-struct json_value json_null(void);
+// This macro allows for easy creation of a array's with values, because currently json_array's are immutable (100% not because I am lazy to implement the proper functions or something /s).
+#define JSON_CREATE_ARRAY(ok, ...) json_array_copy(JSON_CREATE_TEMP_ARRAY(__VA_ARGS__), (ok))
 
 struct json_value json_array_to_value(struct json_array arr);
 
@@ -273,9 +278,6 @@ static struct json__hash_map *json__hash_map_copy(struct json__hash_map *hm);
 static struct json__hash_map_entry json__hash_map_entry_copy(struct json__hash_map_entry entry, struct json__hash_map_entry *new_collisions, struct json__hash_map_entry *old_collisions, bool *ok);
 static bool json__hash_map_entry_valid(struct json__hash_map_entry *entry);
 
-// string
-static bool json__string_eq(struct json_string first, struct json_string second);
-
 // Internal Hash Map for strings to json_value
 struct json__hash_map {
     struct json__hash_map_entry *bucket;
@@ -318,7 +320,7 @@ struct json_object_entry json_object_iterator_next(struct json_object_iterator* 
         };
     }
 
-    for (size_t i = iterator->_bucket_index; i < iterator->_hm->bucket_cap; i++) {
+    for (; iterator->_bucket_index < iterator->_hm->bucket_cap; iterator->_bucket_index++) {
         iterator->_current_entry = &iterator->_hm->bucket[iterator->_bucket_index];
         if (json__hash_map_entry_valid(iterator->_current_entry)) {
             return (struct json_object_entry) {
@@ -683,7 +685,7 @@ static void json__hm_delete(struct json__hash_map* map) {
     JSON_FREE(map);
 }
 
-static bool json__string_eq(struct json_string first, struct json_string second) {
+bool json_string_eq(struct json_string first, struct json_string second) {
     if (first.len != second.len) {
         return false;
     }
@@ -707,13 +709,13 @@ static struct json__hash_map_entry* json__hash_map_get(struct json__hash_map *hm
         return NULL;
     }
 
-    if (json__string_eq(entry->key, key)) {
+    if (json_string_eq(entry->key, key)) {
         return entry;
     }
 
     while (entry->next != NULL) {
         entry = entry->next;
-        if (json__string_eq(entry->key, key)) {
+        if (json_string_eq(entry->key, key)) {
             return entry;
         }
     }
@@ -838,7 +840,7 @@ static bool json__hash_map_delete(struct json__hash_map *hm, struct json_string 
     size_t index = hash % hm->bucket_cap;
     struct json__hash_map_entry *entry = &hm->bucket[index];
 
-    if (json__string_eq(entry->key, key)) {
+    if (json_string_eq(entry->key, key)) {
         json__hash_map_entry_delete(entry);
         if (entry->next) {
             *entry = *entry->next;
@@ -850,7 +852,7 @@ static bool json__hash_map_delete(struct json__hash_map *hm, struct json_string 
     }
 
     while (entry->next != NULL) {
-        if (json__string_eq(entry->next->key, key)) {
+        if (json_string_eq(entry->next->key, key)) {
             // NOTE: This leaves a unused slot over. It will be removed when we resize the hash map
             json__hash_map_entry_delete(entry->next);
             entry->next = entry->next->next;
