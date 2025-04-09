@@ -127,9 +127,10 @@ int main(void) {
     local_assert(ok, "concat should succeed");
     local_assert(arr2.items[0].type == JSON_NUMBER, "member 0 should be number after concat");
     local_assert(arr2.items[0].data.number == 2, "member 0 should have value of 2 after concat");
-    json_array_delete(arr2);
 
+    json_array_delete(arr2);
     json_array_delete(arr);
+
 
     arena_free(context_arena);
 }
