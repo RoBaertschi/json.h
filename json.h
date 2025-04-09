@@ -206,7 +206,7 @@ struct json_value json_string_copyv(struct json_string str, bool *ok);
 // Do not use the str passed into this function, the returnec value has taken ownership of str
 struct json_value json_string_to_value(struct json_string str);
 
-#define JSON_STR(cstr) (struct json_string) { .data = (unsigned char *) cstr, .len = sizeof(cstr) / sizeof(cstr[0]) }
+#define JSON_STR(cstr) (struct json_string) { .data = (unsigned char *) cstr, .len = (sizeof(cstr) / sizeof(cstr[0])) - 1 }
 
 
 // string
@@ -648,10 +648,16 @@ static struct json__hash_map* json__hm_create(void) {
 
     struct json__hash_map_entry *bucket = JSON_CALLOC(JSON_INITIAL_BUCKET_SIZE, sizeof(*bucket));
     if (bucket == NULL) {
+        JSON_FREE(ptr);
         return NULL;
     }
 
     struct json__hash_map_entry *collisions = JSON_CALLOC(JSON_INITIAL_BUCKET_SIZE, sizeof(*collisions));
+    if (collisions == NULL) {
+        JSON_FREE(ptr);
+        JSON_FREE(bucket);
+        return NULL;
+    }
 
     *ptr = (struct json__hash_map) {
         .bucket_cap = JSON_INITIAL_BUCKET_SIZE,
@@ -739,7 +745,7 @@ static bool json__hash_map_grow(struct json__hash_map *hm) {
 
     for (size_t i = 0; i < hm->bucket_cap; i++) {
         struct json__hash_map_entry *entry = &hm->bucket[i];
-        if (json__hash_map_entry_valid(entry)) {
+        if (!json__hash_map_entry_valid(entry)) {
             continue;
         }
 
