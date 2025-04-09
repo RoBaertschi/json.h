@@ -191,6 +191,19 @@ void object_bulk_test(void) {
     json_object_delete(obj);
 }
 
+void lexer_tests(void) {
+    struct json_lexer l = {0};
+    json_lexer_init(&l, JSON_STR("{}"), JSON_STR("test.json"));
+    local_assert(l.pos == 0, "pos is not initalized correctly");
+    local_assert(l.read_pos == 1, "read_pos is not initalized correctly");
+    local_assert(l.ch == '{', "ch is not initalized correctly");
+    local_assert(l.row == 1, "row has to be 1");
+    local_assert(l.col == 1, "col has to be 1");
+
+
+    json_lexer_deinit(&l);
+}
+
 int main(void) {
     int result = setjmp(on_assert);
     if (result != 0) {
@@ -270,6 +283,11 @@ int main(void) {
     json_array_delete(arr2);
     json_array_delete(arr);
 
+    // -----
+    // Lexer
+    // -----
+    
+    lexer_tests();
 
     arena_free(context_arena);
 }

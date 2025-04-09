@@ -31,6 +31,7 @@
 //  Defaults: stdlib.h
 //  These are functions used to allocate memory. If you want to use some sort of custom allocator, this is the place to add it.
 //  NOTE: There might be a point where we add full custom allocator support with user data support.
+//  That would probably use new functions with a allocator user data pointer for each allocation or some sort of allocator interface.
 //
 
 #include <stdio.h>
@@ -45,14 +46,14 @@
 #define JSON_INITIAL_BUCKET_SIZE 16
 #endif // JSON_INITIAL_BUCKET_SIZE
 
-// C11
+// TODO: C11
 // JSON_STATIC_ASSERT(JSON_INITIAL_BUCKET_SIZE > 0, "JSON_INITIAL_BUCKET_SIZE has to be larger than 0");
 
 #ifndef JSON_GROWTH_FACTOR
 #define JSON_GROWTH_FACTOR 2
 #endif // JSON_GROWTH_FACTOR
 
-// C11
+// TODO: C11
 // JSON_STATIC_ASSERT(JSON_GROWTH_FACTOR > 0, "JSON_GROWTH_FACTOR has to be larger than 0");
 
 #ifndef JSON_MAX_LOAD_FACTOR
@@ -254,6 +255,80 @@ void json_value_delete(struct json_value value);
 void json_object_delete(struct json_object object);
 void json_array_delete(struct json_array array);
 void json_string_delete(struct json_string string);
+
+
+//------------------------------
+// LEXER
+//------------------------------
+
+enum json_spec {
+    // json.org
+    JSON_SPEC_JSON,
+    // json with comments
+    JSON_SPEC_JSONC,
+    // json5.org
+    JSON_SPEC_JSON5,
+};
+
+struct json_loc {
+    // Row/Line
+    size_t row; // Starts at 1
+    // Column
+    size_t col; // Starts at 1
+
+    // Index in the source string
+    size_t pos; // Starts at 0
+};
+
+enum json_token_type {
+    JSON_TOKEN_INVALID,
+    JSON_TOKEN_EOF,
+
+    JSON_TOKEN_NUMBER,
+    JSON_TOKEN_STRING,
+
+    JSON_TOKEN_LBRACE,
+    JSON_TOKEN_RBRACE,
+    JSON_TOKEN_LBRACKET,
+    JSON_TOKEN_RBRACKET,
+    JSON_TOKEN_COMMA,
+    JSON_TOKEN_COLON,
+
+    JSON_TOKEN_NULL,
+    JSON_TOKEN_TRUE,
+    JSON_TOKEN_FALSE,
+};
+
+union json_token_data {
+    double number;
+    struct json_string string;
+};
+
+struct json_token {
+    struct json_loc loc;
+    size_t len;
+
+    enum json_token_type type;
+    union json_token_data data;
+};
+
+struct json_lexer {
+    struct json_string source_name;
+    struct json_string source;
+
+    size_t pos; // Starts at 0
+    size_t read_pos; // Starts at 1
+    int ch; // Why int you may ask, because EOF
+
+    size_t row; // Starts at 1
+    size_t col; // Starts at 1
+};
+
+// The string inputs are copied, you will have to delete them yourself.
+bool json_lexer_init(struct json_lexer *lexer, struct json_string source, struct json_string source_name);
+void json_lexer_deinit(struct json_lexer *lexer);
+
+struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok);
 
 #ifdef JSON_IMPLEMENTATION
 
@@ -945,6 +1020,73 @@ static struct json__hash_map_entry json__hash_map_entry_copy(struct json__hash_m
 
 static bool json__hash_map_entry_valid(struct json__hash_map_entry *entry) {
     return entry->value.type != JSON_INVALID;
+}
+
+//------------------------------
+// LEXER
+//------------------------------
+
+static void json__lexer_read_ch(struct json_lexer *l) {
+    if (l->ch == '\n') {
+        l->row += 1;
+        l->col = 1;
+    } else {
+        l->col += 1;
+    }
+
+    if (l->read_pos >= l->source.len) {
+        l->ch = -1;
+    } else {
+        l->ch = l->source.data[l->read_pos];
+    }
+
+    l->pos = l->read_pos;
+    l->read_pos += 1;
+}
+
+// The string inputs are copied, you will have to delete them yourself.
+bool json_lexer_init(struct json_lexer *l, struct json_string source, struct json_string source_name) {
+    bool ok = true;
+    l->source_name = json_string_copy(source_name, &ok);
+    if (!ok) {
+        return false;
+    }
+
+    l->source = json_string_copy(source, &ok);
+    if (!ok) {
+        json_string_delete(l->source_name);
+        l->source_name = (struct json_string){0};
+        return false;
+    }
+
+    // We start on the first row
+    l->row = 1;
+
+    json__lexer_read_ch(l);
+
+    return true;
+}
+
+void json_lexer_deinit(struct json_lexer *l) {
+    json_string_delete(l->source);
+    json_string_delete(l->source_name);
+    *l = (struct json_lexer) {0};
+}
+
+struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
+    struct json_token t = {
+        .len = 1,
+        .loc = (struct json_loc) {.pos = l->pos, .col = l->col, .row = l->row},
+    };
+
+    switch (l->ch) {
+    case -1:
+        t.type = JSON_TOKEN_EOF;
+        break;
+    }
+    json__lexer_read_ch(l);
+
+    return t;
 }
 
 #endif // JSON_IMPLEMENTATION
