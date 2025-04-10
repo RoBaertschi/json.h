@@ -305,9 +305,24 @@ enum json_token_type {
     JSON_TOKEN_FALSE,
 };
 
+enum json_token_invalid_type {
+    JSON_TOKEN_INVALID_UNKOWN_CHAR,
+    JSON_TOKEN_INVALID_STRING_ESCAPE,
+    // Invalid whitespace in string, any of \n \t \r
+    JSON_TOKEN_INVALID_STRING_WHITESPACE,
+    JSON_TOKEN_INVALID_STRING_EOF,
+};
+
+struct json_token_invalid_data {
+    enum json_token_invalid_type type;
+    struct json_loc loc;
+    size_t len;
+};
+
 union json_token_data {
     double number;
     struct json_string string;
+    struct json_token_invalid_data invalid;
 };
 
 struct json_token {
@@ -692,7 +707,9 @@ void json_value_delete(struct json_value value) {
     }
 }
 
-void json_object_delete(struct json_object object) {}
+void json_object_delete(struct json_object object) {
+    json__hm_delete(object._hm);
+}
 
 void json_array_delete(struct json_array array) {
     for (size_t i = 0; i < array.len; i++) {
@@ -1047,8 +1064,8 @@ static bool json__hash_map_entry_valid(struct json__hash_map_entry *entry) {
 // }
 
 enum json__array_err {
-    ARRAY_OK,
-    ARRAY_OOM
+    JSON__ARRAY_OK,
+    JSON__ARRAY_OOM
 };
 
 typedef enum json__array_err array_err;
@@ -1076,49 +1093,49 @@ static array_err json__array_unsigned_char_grow(json__array_unsigned_char *arr) 
     if (arr->items == NULL) {
         arr->items = JSON_MALLOC(sizeof(arr->items[0]) * 4);
         if (arr->items == NULL) {
-            return ARRAY_OOM;
+            return JSON__ARRAY_OOM;
         }
         arr->cap = 4;
     } else {
         size_t new_cap = sizeof(arr->items[0]) * arr->cap * 2;
         unsigned char* items = JSON_REALLOC(arr->items, arr->cap, new_cap);
         if (arr->items == NULL) {
-            return ARRAY_OOM;
+            return JSON__ARRAY_OOM;
         }
         arr->items = items;
         arr->cap = new_cap;
     }
-    return ARRAY_OK;
+    return JSON__ARRAY_OK;
 }
 
 static array_err json__array_unsigned_char_grow_until(json__array_unsigned_char *arr, size_t until) {
     while(arr->cap < until) {
         array_err err = json__array_unsigned_char_grow(arr);
-        if (err != ARRAY_OK) {
+        if (err != JSON__ARRAY_OK) {
             return err;
         }
     }
-    return ARRAY_OK;
+    return JSON__ARRAY_OK;
 }
 
 static array_err json__array_unsigned_char_push(json__array_unsigned_char *arr, unsigned char item) {
     if (arr->cap <= arr->len) {
         array_err err = json__array_unsigned_char_grow_until(arr, arr->len + 1);
-        if (err != ARRAY_OK) {
+        if (err != JSON__ARRAY_OK) {
             return err;
         }
     }
     arr->items[arr->len] = item;
     arr->len += 1;
 
-    return ARRAY_OK;
+    return JSON__ARRAY_OK;
 }
 
 static array_err json__array_unsigned_char_append(json__array_unsigned_char *arr, json__slice_unsigned_char slice) {
     size_t new_size = slice.len + arr->len;
     if (arr->cap <= slice.len + arr->len) {
         array_err err = json__array_unsigned_char_grow_until(arr, new_size);
-        if (err != ARRAY_OK) {
+        if (err != JSON__ARRAY_OK) {
             return err;
         }
     }
@@ -1126,7 +1143,7 @@ static array_err json__array_unsigned_char_append(json__array_unsigned_char *arr
         arr->items[arr->len + i] = slice.items[i];
     }
     arr->len += slice.len;
-    return ARRAY_OK;
+    return JSON__ARRAY_OK;
 }
 
 #define JSON__ARRAY_UNSIGNED_CHAR_APPEND(arr, ...) json__array_unsigned_char_append((arr), (json__slice_unsigned_char){ .items = (unsigned char[]) { __VA_ARGS__ }, .len = sizeof((unsigned char[]){ __VA_ARGS__ }[0]) })
@@ -1194,7 +1211,7 @@ static array_err json__array_unsigned_char_to_owned_slice(json__array_unsigned_c
     unsigned char *new_slice = JSON_MALLOC(sizeof(unsigned char) * arr->len);
 
     if (new_slice == NULL) {
-        return ARRAY_OOM;
+        return JSON__ARRAY_OOM;
     }
 
     for (size_t i = 0; i < arr->len; i++) {
@@ -1206,7 +1223,7 @@ static array_err json__array_unsigned_char_to_owned_slice(json__array_unsigned_c
         .len = arr->len,
     };
 
-    return ARRAY_OK;
+    return JSON__ARRAY_OK;
 }
 
 static void json__slice_unsigned_char_delete_owned(json__slice_unsigned_char slice) {
@@ -1280,6 +1297,15 @@ void json_lexer_deinit(struct json_lexer *l) {
     *l = (struct json_lexer) {0};
 }
 
+
+static struct json_loc json__lexer_loc(struct json_lexer *l) {
+    return (struct json_loc) {
+        .pos = l->pos,
+        .col = l->col,
+        .row = l->row,
+    };
+}
+
 // Hashes for the keywords, as long as all of them are different, we can use them to compare each other.
 static size_t false_hash = 210667871779;
 static size_t true_hash = 6383874908;
@@ -1305,8 +1331,8 @@ static void json__lexer_skip_whitespace(struct json_lexer *l) {
     }
 }
 
-static struct json_token json__lexer_read_token(struct json_lexer *l, bool *ok) {
-    struct json_loc start_loc = (struct json_loc) {.pos = l->pos, .col = l->col, .row = l->row};
+static struct json_token json__lexer_read_identifier(struct json_lexer *l, bool *ok) {
+    struct json_loc start_loc = json__lexer_loc(l);
     size_t start_pos = l->pos;
 
     while (json__lexer_is_valid_identifier_ch(l->ch, false)) {
@@ -1338,6 +1364,155 @@ static struct json_token json__lexer_read_token(struct json_lexer *l, bool *ok) 
     };
 }
 
+static bool json__lexer_is_hex(int ch) {
+    return ('0' <= ch && ch <= '9')
+            || ('a' <= ch && ch <= 'f')
+            || ('A' <= ch && ch <= 'F');
+}
+
+static int json__lexer_hex_value(int ch) {
+    JSON_ASSERT(json__lexer_is_hex(ch), "character passed to json__lexer_hex_value has to be a valid hex char");
+
+    if ('0' <= ch && ch <= '9') {
+        return ch - '0';
+    } else if ('a' <= ch && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+
+    return ch - 'A' + 10;
+}
+
+// If len is 0, we parse until the next invalid hex value
+// Returns -1 on error
+static int json__lexer_parse_hex(struct json_lexer *l, size_t len) {
+    size_t start_pos = l->pos;
+    int value = 0;
+
+    while (json__lexer_is_hex(l->ch)) {
+        value *= 16;
+        value += json__lexer_hex_value(l->ch);
+        json__lexer_read_ch(l);
+        if ((l->pos - start_pos) > len && len != 0) {
+            return value;
+        }
+    }
+
+    if ((l->pos - start_pos) < len) {
+        return -1;
+    }
+
+    return value;
+}
+
+static struct json_token json__lexer_read_string(struct json_lexer *l, bool *ok) {
+    struct json_loc start_loc = json__lexer_loc(l);
+    size_t start_pos = l->pos;
+
+    struct json__array_unsigned_char arr = {0};
+
+    struct json_token tok = {
+        .loc = start_loc,
+    };
+
+    bool done = false;
+    while (!done) {
+        unsigned char char_to_push;
+        switch (l->ch) {
+        case '\\': {
+            struct json_loc escape_start = json__lexer_loc(l);
+            json__lexer_read_ch(l);
+            switch (l->ch) {
+            case '"': case '\\': case '/':
+                char_to_push = l->ch; break;
+            case 'b':
+                char_to_push = '\b'; break;
+            case 'f':
+                char_to_push = '\f'; break;
+            case 'n':
+                char_to_push = '\n'; break;
+            case 'r':
+                char_to_push = '\r'; break;
+            case 't':
+                char_to_push = '\t'; break;
+            case -1:
+                // Invalid character
+                json__array_unsigned_char_delete(arr);
+                tok.len = l->pos - start_pos;
+                tok.data.invalid = (struct json_token_invalid_data) {
+                    .type = JSON_TOKEN_INVALID_STRING_EOF, 
+                    .len = 1,
+                    .loc = json__lexer_loc(l),
+                };
+                return tok;
+            case 'u': // TODO: Add \u
+                // json__lexer_read_ch(l); // Skip the 'u'
+                // int value = json__lexer_parse_hex(l, 4);
+                // if (value == -1) {
+                //     tok.len = l->pos - start_pos;
+                //     tok.data.invalid = (struct json_token_invalid_data){
+                //         .type = JSON_TOKEN_INVALID_STRING_ESCAPE,
+                //         .len = tok.len,
+                //         .loc = escape_start,
+                //     };
+                //     continue;
+                // }
+            default:
+                json__array_unsigned_char_delete(arr);
+                tok.len = l->pos - start_pos;
+                tok.data.invalid = (struct json_token_invalid_data) {
+                    .type = JSON_TOKEN_INVALID_STRING_ESCAPE, 
+                    .len = 2,
+                    .loc = escape_start,
+                };
+                return tok;
+            }
+            if(json__array_unsigned_char_push(&arr, char_to_push) == JSON__ARRAY_OOM) {
+                json__array_unsigned_char_delete(arr);
+                *ok = false;
+                tok.len = l->pos - start_pos;
+                return tok;
+            }
+        }
+        case '"':
+            done = true;
+            continue;
+        case -1: case '\n': case '\r': case '\t':
+            // Invalid character
+            json__array_unsigned_char_delete(arr);
+            tok.len = l->pos - start_pos;
+            tok.data.invalid = (struct json_token_invalid_data) {
+                .type = l->ch == -1 ? JSON_TOKEN_INVALID_STRING_EOF : JSON_TOKEN_INVALID_STRING_ESCAPE, 
+                .len = 2,
+                .loc = json__lexer_loc(l),
+            };
+            return tok;
+        default:
+            if(json__array_unsigned_char_push(&arr, l->ch) == JSON__ARRAY_OOM) {
+                json__array_unsigned_char_delete(arr);
+                *ok = false;
+                tok.len = l->pos - start_pos;
+                return tok;
+            }
+        }
+    }
+
+    tok.len = l->pos - start_pos;
+    json__slice_unsigned_char dst = {0};
+    if(json__array_unsigned_char_to_owned_slice(&arr, &dst) == JSON__ARRAY_OOM) {
+        json__array_unsigned_char_delete(arr);
+        *ok = false;
+        return tok;
+    }
+    json__array_unsigned_char_delete(arr);
+    tok.type = JSON_TOKEN_STRING;
+    tok.data.string = (struct json_string) {
+        .data = dst.items,
+        .len = dst.len,
+    };
+
+    return tok;
+}
+
 struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
     json__lexer_skip_whitespace(l);
 
@@ -1356,7 +1531,7 @@ struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
     case ':':   t.type = JSON_TOKEN_COLON; break;
     default:
         if (json__lexer_is_valid_identifier_ch(l->ch, true)) {
-            return json__lexer_read_token(l, ok);
+            return json__lexer_read_identifier(l, ok);
         }
     }
     json__lexer_read_ch(l);

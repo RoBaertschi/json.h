@@ -63,7 +63,7 @@ void *context_calloc(size_t count, size_t size) {
 }
 
 // Does nothing, this is a arena
-void context_free(void *ptr) {}
+void context_free(void *ptr) {(void)ptr;}
 
 #define JSON_MALLOC(size) context_alloc(size)
 #define JSON_CALLOC(count, size) context_calloc(count, size)

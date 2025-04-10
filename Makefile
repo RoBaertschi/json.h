@@ -1,4 +1,4 @@
-CFLAGS=-std=c99 -pedantic -Wall -Werror -DJSON_IMPLEMENTATION -Wno-unused-function
+CFLAGS=-std=c99 -pedantic -Wextra -Wall -Werror -DJSON_IMPLEMENTATION -Wno-unused-function
 
 .PHONY: ALL
 
