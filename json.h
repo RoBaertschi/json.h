@@ -1230,6 +1230,7 @@ static unsigned char json__slice_unsigned_char_set(json__slice_unsigned_char *sl
 // LEXER
 //------------------------------
 
+// TODO: Add UTF-8 Support using something like this https://bjoern.hoehrmann.de/utf-8/decoder/dfa/
 static void json__lexer_read_ch(struct json_lexer *l) {
     if (l->ch == '\n') {
         l->row += 1;

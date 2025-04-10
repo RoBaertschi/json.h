@@ -1,4 +1,5 @@
 /tests*
+/comp_hashes
 /.direnv
 /compile_commands.json
 /.cache
