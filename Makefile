@@ -1,8 +1,8 @@
-CFLAGS=-std=c99 -pedantic -Wall -Werror -DJSON_IMPLEMENTATION
+CFLAGS=-std=c99 -pedantic -Wall -Werror -DJSON_IMPLEMENTATION -Wno-unused-function
 
 .PHONY: ALL
 
-ALL: tests comp_hashes
+ALL: test comp_hashes
 
 test: tests
 	./tests

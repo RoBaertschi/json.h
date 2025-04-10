@@ -5,6 +5,17 @@
 #include <stdbool.h>
 #include <string.h>
 
+
+void local_assert(bool assertion, char *message);
+
+#define ARENA_ASSERT(cond) local_assert(cond, "ARENA ASSERTION FAILED " #cond)
+#define ARENA_IMPLEMENTATION
+#include "arena.h"
+
+static Arena default_arena = {0};
+// static Arena temp_arena = {0};
+static Arena *context_arena = &default_arena;
+
 static jmp_buf on_assert;
 static char* failed_assertion = NULL;
 
@@ -15,13 +26,22 @@ void local_assert(bool assertion, char *message) {
     }
 }
 
-#define ARENA_ASSERT(cond) local_assert(cond, "ARENA ASSERTION FAILED " #cond)
-#define ARENA_IMPLEMENTATION
-#include "arena.h"
 
-static Arena default_arena = {0};
-// static Arena temp_arena = {0};
-static Arena *context_arena = &default_arena;
+void *context_alloc(size_t size);
+
+void local_assert_eq(bool result, char *left, char *right) {
+    if (!result) {
+        local_assert(context_arena, "invalid context pointer");
+        failed_assertion = arena_sprintf(context_arena, "%s == %s", left, right);
+        longjmp(on_assert, -1);
+    }
+}
+
+#define ASSERT(assertion) local_assert(assertion, "ASSERTION " #assertion " FAILED")
+#define ASSERT_EQ(left, right) local_assert_eq(left == right, #left, #right)
+#define ASSERT_EQ_INT(left, right) local_assert_eq((left) == (right), arena_sprintf(context_arena, "%d", (left)), arena_sprintf(context_arena, "%d", (right)))
+#define ASSERT_EQ_SIZE_T(left, right) local_assert_eq((left) == (right), arena_sprintf(context_arena, "%zu", (left)), arena_sprintf(context_arena, "%zu", (right)))
+
 
 void *context_alloc(size_t size) {
     local_assert(context_arena, "invalid context pointer");
@@ -53,6 +73,216 @@ void context_free(void *ptr) {}
 #include "json.h"
 
 #define HELLO "hello"
+
+void object_bulk_test(void);
+
+void loc_assert_eq(struct json_loc expected, struct json_loc actual) {
+    ASSERT_EQ_SIZE_T(expected.row, actual.row);
+    ASSERT_EQ_SIZE_T(expected.col, actual.col);
+    ASSERT_EQ_SIZE_T(expected.pos, actual.pos);
+}
+
+void token_assert_eq(struct json_token expected, struct json_token actual) {
+    ASSERT_EQ_INT(expected.type, actual.type);
+    ASSERT_EQ_SIZE_T(expected.len, actual.len);
+    switch (expected.type) {
+    case JSON_TOKEN_IDENTIFIER:
+        ASSERT(json_string_eq(expected.data.string, actual.data.string));
+        break;
+    case JSON_TOKEN_NUMBER:
+        ASSERT_EQ(expected.data.number, actual.data.number);
+    default:
+        break;
+    }
+}
+
+void token_loc_assert_eq(struct json_token expected, struct json_token actual) {
+    token_assert_eq(expected, actual);
+    loc_assert_eq(expected.loc, actual.loc);
+}
+
+void lexer_tests(void) {
+    struct json_lexer l = {0};
+
+    { // Test simple
+        json_lexer_init(&l, JSON_STR("{}"), JSON_STR("test.json"), JSON_SPEC_JSON);
+        local_assert(l.pos == 0, "pos is not initalized correctly");
+        local_assert(l.read_pos == 1, "read_pos is not initalized correctly");
+        local_assert(l.ch == '{', "ch is not initalized correctly");
+        local_assert(l.row == 1, "row has to be 1");
+        local_assert(l.col == 1, "col has to be 1");
+        struct json_token expected[] = {
+            (struct json_token){
+                .loc = (struct json_loc) {
+                    .row = 1,
+                    .col = 1,
+                    .pos = 0,
+                },
+                .type = JSON_TOKEN_LBRACE,
+                .len = 1,
+            },
+            (struct json_token){
+                .loc = (struct json_loc) {
+                    .row = 1,
+                    .col = 2,
+                    .pos = 1,
+                },
+                .type = JSON_TOKEN_RBRACE,
+                .len = 1,
+            },
+            (struct json_token){
+                .loc = (struct json_loc) {
+                    .row = 1,
+                    .col = 3,
+                    .pos = 2,
+                },
+                .type = JSON_TOKEN_EOF,
+                .len = 1,
+            },
+        };
+
+        bool ok = true;
+        for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+            struct json_token token = json_lexer_next_token(&l, &ok);
+            local_assert(ok, "should be ok");
+            token_loc_assert_eq(expected[i], token);
+        }
+        json_lexer_deinit(&l);
+    }
+
+    { // Test whitespace
+        json_lexer_init(&l, JSON_STR("{\n}"), JSON_STR("test.json"), JSON_SPEC_JSON);
+        struct json_token expected[] = {
+            (struct json_token){
+                .loc = (struct json_loc) {
+                    .row = 1,
+                    .col = 1,
+                    .pos = 0,
+                },
+                .type = JSON_TOKEN_LBRACE,
+                .len = 1,
+            },
+            (struct json_token){
+                .loc = (struct json_loc) {
+                    .row = 2,
+                    .col = 1,
+                    .pos = 2,
+                },
+                .type = JSON_TOKEN_RBRACE,
+                .len = 1,
+            },
+            (struct json_token){
+                .loc = (struct json_loc) {
+                    .row = 2,
+                    .col = 2,
+                    .pos = 3,
+                },
+                .type = JSON_TOKEN_EOF,
+                .len = 1,
+            },
+        };
+
+        bool ok = true;
+        for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+            struct json_token token = json_lexer_next_token(&l, &ok);
+            local_assert(ok, "should be ok");
+            token_loc_assert_eq(expected[i], token);
+        }
+    }
+
+    json_lexer_deinit(&l);
+}
+
+int main(void) {
+    int result = setjmp(on_assert);
+    if (result != 0) {
+        if (failed_assertion != NULL) {
+            fprintf(stderr, "TEST FAILED: ASSERTION FAILED %s\n", failed_assertion);
+        } else {
+            fprintf(stderr, "TEST FAILED: ASSERTION FAILED\n");
+        }
+
+        arena_free(context_arena);
+        return 1;
+    }
+
+    // -------
+    // Objects
+    // -------
+    
+    object_bulk_test();
+
+    bool ok = true;
+    struct json_object obj = json_object_create(&ok);
+    local_assert(ok, "could not create object");
+
+    bool found = true;
+    json_object_get(&obj, JSON_STR("deez"), &found);
+    local_assert(!found, "found non existing key in object");
+
+    json_object_set(&obj, JSON_STR("deez"), json_string_create_cstrv(HELLO, &ok));
+    local_assert(ok, "could net set json_string('hello') for key 'deez'");
+    json_object_get(&obj, JSON_STR("deez"), &found);
+    local_assert(found, "could not find existing key in object");
+
+    ok = true;
+    struct json_object obj2 = json_object_copy(obj, &ok);
+    local_assert(ok, "could not make a copy of obj");
+    json_object_get(&obj2, JSON_STR("deez"), &found);
+    local_assert(found, "could not find existing key in copied object");
+    json_object_delete(obj2);
+
+    struct json_value val = json_object_get(&obj, JSON_STR("deez"), &found);
+    local_assert(found, "could not find existing key in object");
+    local_assert(val.type == JSON_STRING, "value from object is not string after copy");
+    local_assert(val.data.string.data[0] == HELLO[0], "");
+
+    struct json_value value = json_object_get(&obj, JSON_STR("deez"), &found);
+    local_assert(found, "could not find existing key in object");
+    local_assert(value.type == JSON_STRING, "not json string");
+
+    struct json_object_iterator it = json_object_iterator_create(&obj);
+    struct json_object_entry entry = json_object_iterator_next(&it);
+    local_assert(entry.found, "the iterator should find one entry");
+    local_assert(json_string_eq(entry.key, JSON_STR("deez")), "invalid key from iterator entry");
+
+    found = json_object_del(&obj, JSON_STR("deez"));
+    local_assert(found, "could not delete existing key in object");
+
+    json_object_delete(obj);
+
+    // ------
+    // Arrays
+    // ------
+
+    struct json_array arr = json_array_create();
+    local_assert(arr.len == 0 && arr.items == NULL, "an array initalized with array_create should be completly empty");
+    json_array_delete(arr);
+
+    arr = JSON_CREATE_ARRAY(&ok, json_null(), json_boolean(true), json_null());
+    local_assert(ok, "array should be successfully created");
+    local_assert(arr.items[0].type == JSON_NULL, "member 0 should be null");
+    local_assert(arr.items[1].type == JSON_BOOLEAN
+                 && arr.items[1].data.boolean, "member 1 should be true");
+    local_assert(arr.items[2].type == JSON_NULL, "member 2 should be null");
+
+    struct json_array arr2 = json_array_concat(JSON_CREATE_TEMP_ARRAY(json_number(2)), arr, &ok);
+    local_assert(ok, "concat should succeed");
+    local_assert(arr2.items[0].type == JSON_NUMBER, "member 0 should be number after concat");
+    local_assert(arr2.items[0].data.number == 2, "member 0 should have value of 2 after concat");
+
+    json_array_delete(arr2);
+    json_array_delete(arr);
+
+    // -----
+    // Lexer
+    // -----
+    
+    lexer_tests();
+
+    arena_free(context_arena);
+}
+
 
 void object_bulk_test(void) {
     bool ok = true;
@@ -189,105 +419,4 @@ void object_bulk_test(void) {
     local_assert(json_string_eq(deez31.data.string, JSON_STR(HELLO)), "deez31 invalid string content");
 
     json_object_delete(obj);
-}
-
-void lexer_tests(void) {
-    struct json_lexer l = {0};
-    json_lexer_init(&l, JSON_STR("{}"), JSON_STR("test.json"));
-    local_assert(l.pos == 0, "pos is not initalized correctly");
-    local_assert(l.read_pos == 1, "read_pos is not initalized correctly");
-    local_assert(l.ch == '{', "ch is not initalized correctly");
-    local_assert(l.row == 1, "row has to be 1");
-    local_assert(l.col == 1, "col has to be 1");
-
-
-    json_lexer_deinit(&l);
-}
-
-int main(void) {
-    int result = setjmp(on_assert);
-    if (result != 0) {
-        if (failed_assertion != NULL) {
-            fprintf(stderr, "TEST FAILED: ASSERTION FAILED %s\n", failed_assertion);
-        } else {
-            fprintf(stderr, "TEST FAILED: ASSERTION FAILED\n");
-        }
-        return 1;
-    }
-
-    // -------
-    // Objects
-    // -------
-    
-    object_bulk_test();
-
-    bool ok = true;
-    struct json_object obj = json_object_create(&ok);
-    local_assert(ok, "could not create object");
-
-    bool found = true;
-    json_object_get(&obj, JSON_STR("deez"), &found);
-    local_assert(!found, "found non existing key in object");
-
-    json_object_set(&obj, JSON_STR("deez"), json_string_create_cstrv(HELLO, &ok));
-    local_assert(ok, "could net set json_string('hello') for key 'deez'");
-    json_object_get(&obj, JSON_STR("deez"), &found);
-    local_assert(found, "could not find existing key in object");
-
-    ok = true;
-    struct json_object obj2 = json_object_copy(obj, &ok);
-    local_assert(ok, "could not make a copy of obj");
-    json_object_get(&obj2, JSON_STR("deez"), &found);
-    local_assert(found, "could not find existing key in copied object");
-    json_object_delete(obj2);
-
-    struct json_value val = json_object_get(&obj, JSON_STR("deez"), &found);
-    local_assert(found, "could not find existing key in object");
-    local_assert(val.type == JSON_STRING, "value from object is not string after copy");
-    local_assert(val.data.string.data[0] == HELLO[0], "");
-
-    struct json_value value = json_object_get(&obj, JSON_STR("deez"), &found);
-    local_assert(found, "could not find existing key in object");
-    local_assert(value.type == JSON_STRING, "not json string");
-
-    struct json_object_iterator it = json_object_iterator_create(&obj);
-    struct json_object_entry entry = json_object_iterator_next(&it);
-    local_assert(entry.found, "the iterator should find one entry");
-    local_assert(json_string_eq(entry.key, JSON_STR("deez")), "invalid key from iterator entry");
-
-    found = json_object_del(&obj, JSON_STR("deez"));
-    local_assert(found, "could not delete existing key in object");
-
-    json_object_delete(obj);
-
-    // ------
-    // Arrays
-    // ------
-
-    struct json_array arr = json_array_create();
-    local_assert(arr.len == 0 && arr.items == NULL, "an array initalized with array_create should be completly empty");
-    json_array_delete(arr);
-
-    arr = JSON_CREATE_ARRAY(&ok, json_null(), json_boolean(true), json_null());
-    local_assert(ok, "array should be successfully created");
-    local_assert(arr.items[0].type == JSON_NULL, "member 0 should be null");
-    local_assert(arr.items[1].type == JSON_BOOLEAN
-                 && arr.items[1].data.boolean, "member 1 should be true");
-    local_assert(arr.items[2].type == JSON_NULL, "member 2 should be null");
-
-    struct json_array arr2 = json_array_concat(JSON_CREATE_TEMP_ARRAY(json_number(2)), arr, &ok);
-    local_assert(ok, "concat should succeed");
-    local_assert(arr2.items[0].type == JSON_NUMBER, "member 0 should be number after concat");
-    local_assert(arr2.items[0].data.number == 2, "member 0 should have value of 2 after concat");
-
-    json_array_delete(arr2);
-    json_array_delete(arr);
-
-    // -----
-    // Lexer
-    // -----
-    
-    lexer_tests();
-
-    arena_free(context_arena);
 }

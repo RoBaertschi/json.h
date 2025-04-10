@@ -86,6 +86,11 @@
 #define JSON_ASSERT(condition, message) assert(condition && message)
 #endif // JSON_ASSERT 
 
+#ifndef JSON_ASSERT_NO_MSG
+#include <assert.h>
+#define JSON_ASSERT_NO_MSG(condition) assert(condition && #condition)
+#endif // JSON_ASSERT 
+
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -314,6 +319,8 @@ struct json_token {
 };
 
 struct json_lexer {
+    enum json_spec spec;
+
     struct json_string source_name;
     struct json_string source;
 
@@ -326,7 +333,7 @@ struct json_lexer {
 };
 
 // The string inputs are copied, you will have to delete them yourself.
-bool json_lexer_init(struct json_lexer *lexer, struct json_string source, struct json_string source_name);
+bool json_lexer_init(struct json_lexer *lexer, struct json_string source, struct json_string source_name, enum json_spec spec);
 void json_lexer_deinit(struct json_lexer *lexer);
 
 struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok);
@@ -1024,6 +1031,202 @@ static bool json__hash_map_entry_valid(struct json__hash_map_entry *entry) {
 }
 
 //------------------------------
+// STRING BUILDER
+//------------------------------
+
+// Generated using the javascript version of c_gen and the following config:
+// {
+//     "arrays": [
+//         "unsigned char"
+//     ],
+//     "malloc": "JSON_MALLOC",
+//     "realloc": "JSON_REALLOC",
+//     "free": "JSON_FREE",
+//     "prefix": "json__",
+//     "assert": "JSON_ASSERT"
+// }
+
+enum json__array_err {
+    ARRAY_OK,
+    ARRAY_OOM
+};
+
+typedef enum json__array_err array_err;
+
+struct json__slice_unsigned_char {
+    unsigned char *items;
+    size_t len;
+};
+
+typedef struct json__slice_unsigned_char json__slice_unsigned_char;
+
+struct json__array_unsigned_char {
+    unsigned char *items;
+    size_t len;
+    size_t cap;
+};
+
+typedef struct json__array_unsigned_char json__array_unsigned_char;
+
+static void json__array_unsigned_char_delete(json__array_unsigned_char arr) {
+    JSON_FREE(arr.items);
+}
+
+static array_err json__array_unsigned_char_grow(json__array_unsigned_char *arr) {
+    if (arr->items == NULL) {
+        arr->items = JSON_MALLOC(sizeof(arr->items[0]) * 4);
+        if (arr->items == NULL) {
+            return ARRAY_OOM;
+        }
+        arr->cap = 4;
+    } else {
+        size_t new_cap = sizeof(arr->items[0]) * arr->cap * 2;
+        unsigned char* items = JSON_REALLOC(arr->items, arr->cap, new_cap);
+        if (arr->items == NULL) {
+            return ARRAY_OOM;
+        }
+        arr->items = items;
+        arr->cap = new_cap;
+    }
+    return ARRAY_OK;
+}
+
+static array_err json__array_unsigned_char_grow_until(json__array_unsigned_char *arr, size_t until) {
+    while(arr->cap < until) {
+        array_err err = json__array_unsigned_char_grow(arr);
+        if (err != ARRAY_OK) {
+            return err;
+        }
+    }
+    return ARRAY_OK;
+}
+
+static array_err json__array_unsigned_char_push(json__array_unsigned_char *arr, unsigned char item) {
+    if (arr->cap <= arr->len) {
+        array_err err = json__array_unsigned_char_grow_until(arr, arr->len + 1);
+        if (err != ARRAY_OK) {
+            return err;
+        }
+    }
+    arr->items[arr->len] = item;
+    arr->len += 1;
+
+    return ARRAY_OK;
+}
+
+static array_err json__array_unsigned_char_append(json__array_unsigned_char *arr, json__slice_unsigned_char slice) {
+    size_t new_size = slice.len + arr->len;
+    if (arr->cap <= slice.len + arr->len) {
+        array_err err = json__array_unsigned_char_grow_until(arr, new_size);
+        if (err != ARRAY_OK) {
+            return err;
+        }
+    }
+    for (size_t i = 0; i < slice.len; i++) {
+        arr->items[arr->len + i] = slice.items[i];
+    }
+    arr->len += slice.len;
+    return ARRAY_OK;
+}
+
+#define JSON__ARRAY_UNSIGNED_CHAR_APPEND(arr, ...) json__array_unsigned_char_append((arr), (json__slice_unsigned_char){ .items = (unsigned char[]) { __VA_ARGS__ }, .len = sizeof((unsigned char[]){ __VA_ARGS__ }[0]) })
+
+
+static void json__array_unsigned_char_unordered_remove(json__array_unsigned_char *arr, size_t at) {
+    JSON_ASSERT_NO_MSG(0 <= at && at < arr->len);
+    arr->items[at] = arr->items[arr->len - 1];
+    arr->len -= 1;
+}
+
+static void json__array_unsigned_char_ordererd_remove(json__array_unsigned_char *arr, size_t at) {
+    JSON_ASSERT_NO_MSG(0 <= at && at < arr->len);
+    for (size_t i = at; i < arr->len - 1; i++) {
+       	arr->items[i] = arr->items[i+1];
+    }
+    arr->len -= 1;
+}
+
+static void json__array_unsigned_char_pop(json__array_unsigned_char *arr) {
+    JSON_ASSERT_NO_MSG(arr->len > 0);
+    arr->len -= 1;
+}
+
+static void json__array_unsigned_char_pop_elements(json__array_unsigned_char *arr, size_t elements) {
+    JSON_ASSERT_NO_MSG(arr->len > 0);
+    arr->len -= elements;
+}
+
+static unsigned char json__array_unsigned_char_get(json__array_unsigned_char *arr, size_t at) {
+    JSON_ASSERT_NO_MSG(at < arr->len);
+    return arr->items[at];
+}
+
+static unsigned char json__array_unsigned_char_set(json__array_unsigned_char *arr, size_t at, unsigned char value) {
+    JSON_ASSERT_NO_MSG(at < arr->len);
+    unsigned char old_value = arr->items[at];
+    arr->items[at] = value;
+    return old_value;
+}
+
+// IMPORTANT: This slice is not owned, it has the same lifetime as the original array
+static json__slice_unsigned_char json__array_unsigned_char_slice(json__array_unsigned_char *arr, size_t from, size_t to) {
+    JSON_ASSERT_NO_MSG(0 <= from);
+    JSON_ASSERT_NO_MSG(to <= arr->len);
+    JSON_ASSERT_NO_MSG(to < from);
+    return (json__slice_unsigned_char){
+        .items = arr->items + from,
+        .len = to,
+    };
+}
+
+// IMPORTANT: This slice is not owned, it has the same lifetime as the original slice
+static json__slice_unsigned_char json__slice_unsigned_char_slice(json__slice_unsigned_char *slice, size_t from, size_t to) {
+    JSON_ASSERT_NO_MSG(0 <= from);
+    JSON_ASSERT_NO_MSG(to <= slice->len);
+    JSON_ASSERT_NO_MSG(to < from);
+    return (json__slice_unsigned_char){
+        .items = slice->items + from,
+        .len = to,
+    };
+}
+
+static array_err json__array_unsigned_char_to_owned_slice(json__array_unsigned_char *arr, json__slice_unsigned_char *dst) {
+    unsigned char *new_slice = JSON_MALLOC(sizeof(unsigned char) * arr->len);
+
+    if (new_slice == NULL) {
+        return ARRAY_OOM;
+    }
+
+    for (size_t i = 0; i < arr->len; i++) {
+        new_slice[i] = arr->items[i];
+    }
+
+    *dst = (json__slice_unsigned_char){
+        .items = new_slice,
+        .len = arr->len,
+    };
+
+    return ARRAY_OK;
+}
+
+static void json__slice_unsigned_char_delete_owned(json__slice_unsigned_char slice) {
+    JSON_FREE(slice.items);
+}
+
+static unsigned char json__slice_unsigned_char_get(json__slice_unsigned_char *slice, size_t at) {
+    JSON_ASSERT_NO_MSG(at < slice->len);
+    return slice->items[at];
+}
+
+static unsigned char json__slice_unsigned_char_set(json__slice_unsigned_char *slice, size_t at, unsigned char value) {
+    JSON_ASSERT_NO_MSG(at < slice->len);
+    unsigned char old_value = slice->items[at];
+    slice->items[at] = value;
+    return old_value;
+}
+
+
+//------------------------------
 // LEXER
 //------------------------------
 
@@ -1046,7 +1249,7 @@ static void json__lexer_read_ch(struct json_lexer *l) {
 }
 
 // The string inputs are copied, you will have to delete them yourself.
-bool json_lexer_init(struct json_lexer *l, struct json_string source, struct json_string source_name) {
+bool json_lexer_init(struct json_lexer *l, struct json_string source, struct json_string source_name, enum json_spec spec) {
     bool ok = true;
     l->source_name = json_string_copy(source_name, &ok);
     if (!ok) {
@@ -1059,6 +1262,8 @@ bool json_lexer_init(struct json_lexer *l, struct json_string source, struct jso
         l->source_name = (struct json_string){0};
         return false;
     }
+
+    l->spec = spec;
 
     // We start on the first row
     l->row = 1;
@@ -1086,6 +1291,19 @@ static bool json__lexer_is_valid_identifier_ch(unsigned char ch, bool first_ch) 
             || (!first_ch && ('0' <= ch && ch <= '9'));
 }
 
+static bool json__is_whitespace(int ch) {
+    return ch == ' '
+            || ch == '\n'
+            || ch == '\r'
+            || ch == '\t';
+}
+
+static void json__lexer_skip_whitespace(struct json_lexer *l) {
+    while (json__is_whitespace(l->ch)) {
+        json__lexer_read_ch(l);
+    }
+}
+
 static struct json_token json__lexer_read_token(struct json_lexer *l, bool *ok) {
     struct json_loc start_loc = (struct json_loc) {.pos = l->pos, .col = l->col, .row = l->row};
     size_t start_pos = l->pos;
@@ -1099,6 +1317,9 @@ static struct json_token json__lexer_read_token(struct json_lexer *l, bool *ok) 
     enum json_token_type type = JSON_TOKEN_IDENTIFIER;
     union json_token_data data = {0};
 
+    // This is a lot more efficent then comparing each with the string
+    // This only works if all the hashes are in fact, different, if not
+    // we probably have to add an actual hash table
     if (hash == false_hash) {
         type = JSON_TOKEN_FALSE;
     } else if (hash == true_hash) {
@@ -1117,6 +1338,8 @@ static struct json_token json__lexer_read_token(struct json_lexer *l, bool *ok) 
 }
 
 struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
+    json__lexer_skip_whitespace(l);
+
     struct json_token t = {
         .len = 1,
         .loc = (struct json_loc) {.pos = l->pos, .col = l->col, .row = l->row},
@@ -1125,7 +1348,7 @@ struct json_token json_lexer_next_token(struct json_lexer *l, bool *ok) {
     switch (l->ch) {
     case -1:    t.type = JSON_TOKEN_EOF; break;
     case '{':   t.type = JSON_TOKEN_LBRACE; break;
-    case '}':   t.type = JSON_TOKEN_LBRACE; break;
+    case '}':   t.type = JSON_TOKEN_RBRACE; break;
     case '[':   t.type = JSON_TOKEN_LBRACKET; break;
     case ']':   t.type = JSON_TOKEN_RBRACKET; break;
     case ',':   t.type = JSON_TOKEN_COMMA; break;
